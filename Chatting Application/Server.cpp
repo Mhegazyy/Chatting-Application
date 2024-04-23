@@ -4,6 +4,7 @@
 #include <string>
 #include <mutex>
 #include <thread>
+#include <vector>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <openssl/evp.h>
@@ -31,7 +32,7 @@ private:
 
 public:
     SocketArray() : sockets(nullptr), capacity(0), size(0) {
-        capacity = 2; // Initial capacity of 2
+        capacity = 2;
         sockets = new SOCKET[capacity];
     }
 
@@ -55,6 +56,10 @@ public:
 
     size_t getSize() const {
         return size;
+    }
+
+    bool isFull() const {
+        return size == 2;
     }
 };
 
@@ -96,50 +101,90 @@ void storeUserCredentials(const std::string& username, const std::string& hashed
 
 bool verifyUserCredentials(const std::string& username, const std::string& password) {
     std::ifstream file("Users.txt");
+    if (!file.is_open()) {
+        std::cerr << "Error: Failed to open Users.txt" << std::endl;
+        return false;
+    }
+
     std::string line, usr, pwd;
+    bool userFound = false;
     while (getline(file, line)) {
         std::istringstream iss(line);
         if (getline(iss, usr, ':') && getline(iss, pwd)) {
-            if (usr == username && pwd == hashPassword(password)) {
-                return true;
+            if (usr == username) {
+                userFound = true;
+                std::cout << "Retrieved hashed password: " << pwd << std::endl;
+                std::string hashedPassword = hashPassword(password);
+                std::cout << "Hashed password entered by user: " << hashedPassword << std::endl;
+                if (pwd == hashedPassword) {
+                    return true; // User found and password matches
+                }
+                else {
+                    return false; // Password doesn't match
+                }
             }
         }
     }
+
+    // If the loop completes without finding the username
+    if (!userFound) {
+        std::cout << "User not found: " << username << std::endl;
+        return false;
+    }
+
+    // This code should not be reached, but return false to handle unexpected cases
     return false;
 }
 
+
+
 void handleClient(SOCKET clientSocket) {
     char buf[BUF_SIZE];
-    ZeroMemory(buf, BUF_SIZE);
-    int bytesReceived = recv(clientSocket, buf, BUF_SIZE, 0);  // Receive the choice
-    if (bytesReceived > 0) {
-        int choice = atoi(buf);  // Convert received data to int (choice)
-        std::string response = (choice == 1) ? "Login selected." : "Registration selected.";
-        send(clientSocket, response.c_str(), response.length() + 1, 0);  // Send response to client
+    recv(clientSocket, buf, BUF_SIZE, 0); // Receive choice: Login or Register
+    int choice = atoi(buf);
 
-        // Wait for username and password
+    if (choice == 1) { // Login
+        recv(clientSocket, buf, BUF_SIZE, 0); // Receive username:password
+        std::string credentials(buf);
+        auto colonPos = credentials.find(":");
+        std::string username = credentials.substr(0, colonPos);
+        std::string password = credentials.substr(colonPos + 1);
+        if (verifyUserCredentials(username, password)) {
+            const char* msg = "Login successful!";
+            send(clientSocket, msg, strlen(msg), 0);
+        }
+        else {
+            const char* msg = "Login failed!";
+            send(clientSocket, msg, strlen(msg), 0);
+            closesocket(clientSocket);
+            return;
+        }
+    }
+    else if (choice == 2) { // Register
+        recv(clientSocket, buf, BUF_SIZE, 0); // Receive username:password
+        std::string credentials(buf);
+        auto colonPos = credentials.find(":");
+        std::string username = credentials.substr(0, colonPos);
+        std::string password = credentials.substr(colonPos + 1);
+        storeUserCredentials(username, hashPassword(password));
+        const char* msg = "Registration successful!";
+        send(clientSocket, msg, strlen(msg), 0);
+    }
+
+    // After successful login or registration, handle chat
+    while (true) {
         ZeroMemory(buf, BUF_SIZE);
-        bytesReceived = recv(clientSocket, buf, BUF_SIZE, 0);
-        if (bytesReceived > 0) {
-            std::string credentials(buf);
-            auto colonPos = credentials.find(":");
-            std::string username = credentials.substr(0, colonPos);
-            std::string password = credentials.substr(colonPos + 1);
-            std::string hashedPassword = hashPassword(password);
+        int bytesReceived = recv(clientSocket, buf, BUF_SIZE, 0);
+        if (bytesReceived <= 0) {
+            break;  // Client has disconnected or an error occurred
+        }
 
-            if (choice == 1) { // Login
-                if (verifyUserCredentials(username, hashedPassword)) {
-                    response = "Login successful!";
-                }
-                else {
-                    response = "Login failed!";
-                }
+        std::string message(buf);
+        // Forward message to other clients
+        for (int i = 0; i < clientSockets.getSize(); i++) {
+            if (clientSockets[i] != clientSocket) {
+                send(clientSockets[i], message.c_str(), message.length(), 0);
             }
-            else { // Registration
-                storeUserCredentials(username, hashedPassword);
-                response = "Registration successful!";
-            }
-            send(clientSocket, response.c_str(), response.length() + 1, 0);  // Send final response
         }
     }
     closesocket(clientSocket);
@@ -157,14 +202,13 @@ int main() {
     bind(listeningSocket, (sockaddr*)&server, sizeof(server));
     listen(listeningSocket, 2);
 
-    while (clientSockets.getSize() < 2) {
+    while (true) {
         SOCKET clientSocket = accept(listeningSocket, NULL, NULL);
         if (clientSocket == INVALID_SOCKET) {
             std::cerr << "Failed to accept connection: " << WSAGetLastError() << std::endl;
             continue;
         }
-        std::lock_guard<std::mutex> lock(clientMutex);
-        clientSockets.add(clientSocket);
+
         std::thread clientThread(handleClient, clientSocket);
         clientThread.detach();
     }
