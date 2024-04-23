@@ -274,7 +274,14 @@ void handleClient(SOCKET clientSocket) {
                     }
                 }
                 else if (command == "2") {  // Registration
-                    // Handle registration
+                    // Assume we always allow registration for simplicity
+                    std::string encryptedPassword = caesarEncrypt(password, 3);
+                    storeUserCredentials(username, encryptedPassword);
+                    isLoggedIn = true;  // Optionally set the user as logged in immediately after registration
+                    std::string response = "Registration successful!";
+                    std::string encryptedResponse = caesarEncrypt(response, 3);
+                    send(clientSocket, encryptedResponse.c_str(), encryptedResponse.length(), 0);
+                    std::cout << "Registration successful for " << username << std::endl;
                 }
                 isExpectingCredentials = false;
             }
