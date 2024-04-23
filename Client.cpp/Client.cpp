@@ -21,8 +21,9 @@ void receiveMessages(SOCKET sock) {
     char buf[BUF_SIZE];
     while (true) {
         ZeroMemory(buf, BUF_SIZE);
-        int bytesReceived = recv(sock, buf, BUF_SIZE, 0);
+        int bytesReceived = recv(sock, buf, BUF_SIZE - 1, 0);
         if (bytesReceived > 0) {
+            buf[bytesReceived] = '\0'; // Ensure null-termination
             std::cout << "Server: " << buf << std::endl;
         }
         else {
@@ -56,7 +57,8 @@ int main() {
 
     int choice;
     std::cin >> choice;
-    send(sock, std::to_string(choice).c_str(), sizeof(choice), 0);
+    std::string choice_str = std::to_string(choice);
+    send(sock, choice_str.c_str(), choice_str.length(), 0);
 
     std::cout << "Enter username: ";
     std::string username;
@@ -70,8 +72,11 @@ int main() {
 
     char serverResponse[BUF_SIZE];
     ZeroMemory(serverResponse, BUF_SIZE);
-    recv(sock, serverResponse, BUF_SIZE, 0);
-    std::cout << "Server says: " << serverResponse << std::endl;
+    int bytesReceived = recv(sock, serverResponse, BUF_SIZE - 1, 0);
+    if (bytesReceived > 0) {
+        serverResponse[bytesReceived] = '\0'; // Ensure null-termination
+        std::cout << "Server says: " << serverResponse << std::endl;
+    }
 
     std::thread receiveThread(receiveMessages, sock);
     receiveThread.detach();
